@@ -1,31 +1,73 @@
-package example
+package lambda
 
-import com.amazonaws.services.lambda.runtime.{Context, RequestHandler}
-import com.amazonaws.services.lambda.AWSLambdaClientBuilder
-import com.amazonaws.services.costexplorer.AWSCostExplorerClientBuilder
-import com.amazonaws.services.costexplorer.model.{GetCostAndUsageRequest, DateInterval, Granularity}
-import com.slack.api.Slack
-import com.slack.api.webhook.Payload
 import java.time.LocalDate
+import play.api.{ Logging, Configuration }
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.costexplorer.CostExplorerClient
+import software.amazon.awssdk.services.costexplorer.model._
+import com.slack.api.Slack
+import com.slack.api.methods.MethodsClient
+import com.slack.api.methods.request.chat.ChatPostMessageRequest
 
-class AwsSlackBot extends RequestHandler[Object, Unit] {
-  def handleRequest(input: Object, context: Context): Unit = {
-    val costExplorer = AWSCostExplorerClientBuilder.defaultClient()
-    val startDate    = LocalDate.now().minusDays(1).toString
-    val endDate      = LocalDate.now().toString
-    val request      = new GetCostAndUsageRequest()
-      .withTimePeriod(new DateInterval().withStart(startDate).withEnd(endDate))
-      .withGranularity(Granularity.DAILY)
-      .withMetrics("UnblendedCost")
+/**
+ * AWSの利用料金を算出して通知する
+ */
+object CostNotification extends Logging {
 
-    val result  = costExplorer.getCostAndUsage(request)
-    val cost    = result.getResultsByTime.get(0).getTotal.get("UnblendedCost").getAmount
-    val message = s"昨日のAWS料金は $$cost です。"
+  // --[ Properties ]-----------------------------------------------------------
+  protected val config  = Configuration()
+  val SLACK_WEBHOOK_URL = config.get[String]("ws.slack.endpoint")
 
-    val slackWebhookUrl = System.getenv("SLACK_WEBHOOK_URL")
-    val slack           = Slack.getInstance()
-    val payload         = Payload.builder().text(message).build()
+  // --[ Methods ]--------------------------------------------------------------
+  /**
+   * テスト用
+   */
+  def main(args: Array[String]): Unit = {
+    val cost = getCost()
+    postToSlack(SLACK_WEBHOOK_URL, cost)
+  }
 
-    slack.send(slackWebhookUrl, payload)
+  /**
+   * AWS利用料金の取得
+   */
+  def getCost(): Double = {
+    val costExplorerClient = CostExplorerClient.builder().region(Region.US_EAST_1).build()
+
+    val today     = LocalDate.now()
+    val firstDate = today.withDayOfMonth(1)
+    val yesterday = today.minusMonths(1)
+
+    val request   = GetCostAndUsageRequest.builder()
+      .timePeriod(
+        DateInterval.builder()
+          .start(firstDate)
+          .end(yesterday)
+          .build()
+      )
+      .granularity(Granularity.DAILY)
+      .metrics("UnblendedCost")
+      .build()
+
+    val response = costExplorerClient.getCostAndUsage(request)
+
+    response.resultsByTime().asScala.map { result =>
+      result.total().get("UnblendedCost").amount().toDouble
+    }.sum
+  }
+
+  /**
+   * Slackへ通知を飛ばす
+   */
+  def postToSlack(webhookUrl: String, cost: Double): Unit = {
+    val methodsClient: MethodsClient = Slack.getInstance().methods()
+
+    val message = s"AWS の料金は、現在合計 $cost ドルです。"
+    val request = ChatPostMessageRequest.builder()
+      .channel("#general")
+      .text(message)
+      .build()
+
+    methodsClient.chatPostMessage(request)
   }
 }
+

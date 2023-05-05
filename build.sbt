@@ -6,18 +6,17 @@ ThisBuild / organization     := "com.example"
 ThisBuild / organizationName := "example"
 
 lazy val root = (project in file("."))
+  .enablePlugins(PlayScala)
   .settings(
     name := "slack-notification-bot",
     libraryDependencies ++= Seq(
       scalaTest % Test,
-      // --[ Scala Library ]----------------------------------------------------
       "org.scala-lang.modules" % "scala-java8-compat_2.12" % "0.9.0",
 
-      // --[ AWS SDK ]----------------------------------------------------------
       "com.amazonaws" % "aws-java-sdk" % "1.12.99",
 
-      // --[ Slack SDK ]--------------------------------------------------------
-      "com.slack.api" % "slack-api-client" % "1.11.0"
-      )
+      "software.amazon.awssdk" % "costexplorer"     % "2.17.96",
+      "com.slack.api"          % "slack-api-client" % "1.17.0"
+    )
   )
 
